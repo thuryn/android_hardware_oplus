@@ -121,11 +121,15 @@ class BiometricsFingerprint : public IBiometricsFingerprint,
     }
 
     bool setDimlayerHbm(unsigned int value) {
-        return isUdfps() && ioctl(mOplusDisplayFd, PANEL_IOCTL_SET_DIMLAYER_HBM, &value) == 0;
+        bool res = isUdfps() && ioctl(mOplusDisplayFd, PANEL_IOCTL_SET_DIMLAYER_HBM, &value) == 0;
+        ALOGE("[UDFPS HAL] setDimlayerHbm(%u) -> res=%d (isUdfps=%d)", value, res, isUdfps());
+        return res;
     }
 
     bool setFpPress(unsigned int value) {
-        return isUdfps() && ioctl(mOplusDisplayFd, PANEL_IOCTL_SET_FP_PRESS, &value) == 0;
+        bool res = isUdfps() && ioctl(mOplusDisplayFd, PANEL_IOCTL_SET_FP_PRESS, &value) == 0;
+        ALOGE("[UDFPS HAL] setFpPress(%u) -> res=%d (isUdfps=%d)", value, res, isUdfps());
+        return res;
     }
 
     sp<IOplusBiometricsFingerprint> mOplusBiometricsFingerprint;

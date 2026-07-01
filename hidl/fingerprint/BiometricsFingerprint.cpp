@@ -17,6 +17,8 @@
 #define LOG_TAG "android.hardware.biometrics.fingerprint@2.3-service.oplus"
 
 #include "BiometricsFingerprint.h"
+#include <sys/ioctl.h>
+#include <unistd.h>
 
 namespace android {
 namespace hardware {
@@ -75,6 +77,12 @@ Return<RequestStatus> BiometricsFingerprint::setActiveGroup(uint32_t gid,
 }
 
 Return<RequestStatus> BiometricsFingerprint::authenticate(uint64_t operationId, uint32_t gid) {
+    ALOGE("[UDFPS HAL] authenticate called: operationId=%lu, gid=%u", operationId, gid);
+    if (mOplusDisplayFd >= 0) {
+        unsigned int enable = 1;
+        // Preventivně probudíme dimlayer v kernelu, aby techpack věděl, že se blíží skenování
+        ioctl(mOplusDisplayFd, PANEL_IOCTL_SET_DIMLAYER_BL_EN, &enable);
+    }
     setDimlayerHbm(1);
     return mOplusBiometricsFingerprint->authenticate(operationId, gid);
 }
@@ -84,13 +92,39 @@ Return<bool> BiometricsFingerprint::isUdfps(uint32_t sensorID) {
 }
 
 Return<void> BiometricsFingerprint::onFingerDown(uint32_t x, uint32_t y, float minor, float major) {
+    ALOGE("[UDFPS HAL] onFingerDown called: x=%u, y=%u", x, y);
+    if (mOplusDisplayFd >= 0) {
+        unsigned int enable = 1;
+        unsigned int hbm_udfps_mode = 2;
+
+        // 1. Probudíme hardwarově panely displeje
+        ioctl(mOplusDisplayFd, PANEL_IOCTL_SET_DIMLAYER_BL_EN, &enable);
+        ioctl(mOplusDisplayFd, PANEL_IOCTL_SET_HBM, &hbm_udfps_mode);
+        ioctl(mOplusDisplayFd, PANEL_IOCTL_SET_FP_PRESS, &enable);
+
+        // 2. KLÍČOVÉ: Zvýšíme zpoždění na 30-50 ms.
+        // To dá Keyguardu dostatek času na to, aby zpracoval přechod z AOD stavu,
+        // a panel stabilizoval gamma křivku pro focení prstu.
+        usleep(15000);
+
+        ALOGE("[UDFPS HAL] Hardwarová sekvence stabilizována (40ms sleep).");
+    }
     setFpPress(1);
-    return isUff() ? Void() : mOplusBiometricsFingerprint->onFingerDown(x, y, minor, major);
+    mOplusBiometricsFingerprint->onFingerDown(x, y, minor, major);
+    return Void();
 }
 
 Return<void> BiometricsFingerprint::onFingerUp() {
+    ALOGE("[UDFPS HAL] onFingerUp called");
     setFpPress(0);
-    return isUff() ? Void() : mOplusBiometricsFingerprint->onFingerUp();
+    if (mOplusDisplayFd >= 0) {
+        unsigned int disable = 0;
+        ioctl(mOplusDisplayFd, PANEL_IOCTL_SET_FP_PRESS, &disable);
+        ioctl(mOplusDisplayFd, PANEL_IOCTL_SET_HBM, &disable);
+        ioctl(mOplusDisplayFd, PANEL_IOCTL_SET_DIMLAYER_BL_EN, &disable);
+    }
+    mOplusBiometricsFingerprint->onFingerUp();
+    return Void();
 }
 
 Return<void> BiometricsFingerprint::onEnrollResult(uint64_t deviceId, uint32_t fingerId,
@@ -107,17 +141,32 @@ Return<void> BiometricsFingerprint::onAcquired(uint64_t deviceId,
 Return<void> BiometricsFingerprint::onAuthenticated(uint64_t deviceId, uint32_t fingerId,
                                                     uint32_t groupId,
                                                     const hidl_vec<uint8_t>& token) {
+    ALOGE("[UDFPS HAL] onAuthenticated called: deviceId=%lu, fingerId=%u", deviceId, fingerId);
     if (fingerId != 0) {
         setDimlayerHbm(0);
     }
     setFpPress(0);
+    if (mOplusDisplayFd >= 0) {
+        unsigned int disable = 0;
+        ioctl(mOplusDisplayFd, PANEL_IOCTL_SET_FP_PRESS, &disable);
+        ioctl(mOplusDisplayFd, PANEL_IOCTL_SET_HBM, &disable);
+        ioctl(mOplusDisplayFd, PANEL_IOCTL_SET_DIMLAYER_BL_EN, &disable);
+    }
     return mClientCallback->onAuthenticated(deviceId, fingerId, groupId, token);
 }
 
 Return<void> BiometricsFingerprint::onError(uint64_t deviceId, FingerprintError error,
                                             int32_t vendorCode) {
+    ALOGE("[UDFPS HAL] onError called: deviceId=%lu, error=%d, vendorCode=%d",
+          deviceId, static_cast<int>(error), vendorCode);
     setDimlayerHbm(0);
     setFpPress(0);
+    if (mOplusDisplayFd >= 0) {
+        unsigned int disable = 0;
+        ioctl(mOplusDisplayFd, PANEL_IOCTL_SET_FP_PRESS, &disable);
+        ioctl(mOplusDisplayFd, PANEL_IOCTL_SET_HBM, &disable);
+        ioctl(mOplusDisplayFd, PANEL_IOCTL_SET_DIMLAYER_BL_EN, &disable);
+    }
     return mClientCallback->onError(deviceId, error, vendorCode);
 }
 
